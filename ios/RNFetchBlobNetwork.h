@@ -19,7 +19,15 @@
 #ifndef RNFetchBlobNetwork_h
 #define RNFetchBlobNetwork_h
 
+@interface RNFetchBlobNetworkManager : NSObject
 
+@property (nonatomic, strong, nullable) NSTimer * expireTimer;
+@property (nonatomic, strong, nullable) NSMutableDictionary * runningBackgroundTasks;
+@property (nonatomic, assign) UIBackgroundTaskIdentifier backTaskId;
+
++ (instancetype)instance;
+
+@end
 
 typedef void(^CompletionHander)(NSURL * _Nullable location, NSURLResponse * _Nullable response, NSError * _Nullable error);
 typedef void(^DataTaskCompletionHander) (NSData * _Nullable resp, NSURLResponse * _Nullable response, NSError * _Nullable error);
@@ -38,7 +46,6 @@ typedef void(^DataTaskCompletionHander) (NSData * _Nullable resp, NSURLResponse 
 @property (strong, nonatomic) CompletionHander fileTaskCompletionHandler;
 @property (strong, nonatomic) DataTaskCompletionHander dataTaskCompletionHandler;
 @property (nullable, nonatomic) NSError * error;
-
 
 + (NSMutableDictionary  * _Nullable ) normalizeHeaders:(NSDictionary * _Nullable)headers;
 + (void) cancelRequest:(NSString *)taskId;

@@ -40,6 +40,74 @@ NSMapTable * expirationTable;
 NSMutableDictionary * progressTable;
 NSMutableDictionary * uploadProgressTable;
 
+static RNFetchBlobNetworkManager *networkManager = nil;
+
+@implementation RNFetchBlobNetworkManager
+
++ (instancetype)instance
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        networkManager = [RNFetchBlobNetworkManager new];
+    });
+    
+    return networkManager;
+}
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self)
+    {
+        self.runningBackgroundTasks = [NSMutableDictionary dictionary];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(backgroundStart) name:UIApplicationWillResignActiveNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(backgroundEnd) name:UIApplicationDidBecomeActiveNotification object:nil];
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillEnterForegroundNotification object:nil];
+}
+
+- (void)backgroundStart
+{
+    if (self.runningBackgroundTasks.count > 0)
+    {
+        self.backTaskId = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:nil];
+        self.expireTimer = [NSTimer scheduledTimerWithTimeInterval:160 target:self selector:@selector(onTimer:) userInfo:nil repeats:NO];
+    }
+}
+
+- (void)backgroundEnd
+{
+    if (self.expireTimer != nil)
+    {
+        [self.expireTimer invalidate];
+        self.expireTimer = nil;
+    }
+    
+    if (self.backTaskId !=  UIBackgroundTaskInvalid)
+    {
+        UIBackgroundTaskIdentifier tid = self.backTaskId;
+        self.backTaskId = UIBackgroundTaskInvalid;
+        [[UIApplication sharedApplication] endBackgroundTask:tid];
+    }
+}
+
+- (void)onTimer:(NSTimer *)timer
+{
+    [self.runningBackgroundTasks enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
+        [expirationTable setObject:obj forKey:key];
+    }];
+    
+    [self backgroundEnd];
+}
+
+@end
+
 __attribute__((constructor))
 static void initialize_tables() {
     if(expirationTable == nil)
@@ -246,15 +314,8 @@ NSOperationQueue *taskQueue;
     if([[options objectForKey:CONFIG_INDICATOR] boolValue] == YES)
         [[UIApplication sharedApplication] setNetworkActivityIndicatorVisible:YES];
     __block UIApplication * app = [UIApplication sharedApplication];
-
-    // #115 handling task expired when application entering backgound for a long time
-    UIBackgroundTaskIdentifier tid = [app beginBackgroundTaskWithName:taskId expirationHandler:^{
-        NSLog([NSString stringWithFormat:@"session %@ expired", taskId ]);
-        [expirationTable setObject:task forKey:taskId];
-        // comment out this one as it might cause app crash #271
-//        [app endBackgroundTask:tid];
-    }];
-
+    
+    [[RNFetchBlobNetworkManager instance].runningBackgroundTasks setObject:task forKey:taskId];
 }
 
 // #115 Invoke fetch.expire event on those expired requests so that the expired event can be handled
@@ -543,12 +604,13 @@ NSOperationQueue *taskQueue;
 
     callback(@[ errMsg, rnfbRespType, respStr]);
 
-    @synchronized(taskTable, uploadProgressTable, progressTable)
+    @synchronized(taskTable, [RNFetchBlobNetworkManager instance].runningBackgroundTasks, uploadProgressTable, progressTable)
     {
         if([taskTable objectForKey:taskId] == nil)
             NSLog(@"object released by ARC.");
         else
             [taskTable removeObjectForKey:taskId];
+        [[RNFetchBlobNetworkManager instance].runningBackgroundTasks removeObjectForKey:taskId];
         [uploadProgressTable removeObjectForKey:taskId];
         [progressTable removeObjectForKey:taskId];
     }
